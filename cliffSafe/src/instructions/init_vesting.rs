@@ -50,6 +50,7 @@ pub struct InitializeVesting<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
+
 impl<'info> InitializeVesting<'info> {
     pub fn initialize_vesting(&mut self, company_name: String, is_revocable: bool, bump: &InitializeVestingBumps) -> Result<()> {
         let vesting_contract_info = &mut self.vesting_contract_info;
@@ -57,8 +58,9 @@ impl<'info> InitializeVesting<'info> {
             creator: self.creator.key(),
             company_name,
             mint: self.mint.key(),
-            total_locked_tokens: 0,
+            total_vested_tokens: 0,
             total_available_tokens: 0,
+            total_locked_tokens: 0,
             total_claimed_tokens: 0,
             vault_account: self.vault.key(),
             created_at: Clock::get()?.unix_timestamp,
