@@ -19,10 +19,17 @@ pub struct DepositTokens<'info> {
     #[account(
         mut,
         seeds = [company_name.as_bytes().as_ref(), creator.key().as_ref(), mint.key().as_ref()],
-        bump = vesting_contract_info.vault_bump,
-        constraint = vesting_contract_info.creator == creator.key(),
+        bump
     )]
-    pub vesting_contract_info: Account<'info, VestingContractInfo>,
+    pub vesting_contract_info: Box<Account<'info, VestingContractInfo>>,
+
+    #[account(mut,
+        seeds = [b"vault", mint.key().as_ref(), creator.key().as_ref()],
+        bump,
+        token::mint = mint,
+        token::authority = vesting_contract_info,
+    )]
+    pub vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -30,15 +37,6 @@ pub struct DepositTokens<'info> {
         associated_token::authority = creator,
     )]
     pub company_ata: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        seeds = [b"vault", mint.key().as_ref(), creator.key().as_ref()],
-        bump,
-        token::mint = mint,
-        token::authority = vesting_contract_info,
-    )]
-    pub vault: Account<'info, TokenAccount>,
 
     pub system_program: Program<'info, System>,
 
@@ -48,15 +46,16 @@ pub struct DepositTokens<'info> {
 }
 
 impl<'info> DepositTokens<'info> {
-    pub fn process_deposit_tokens(&mut self, deposit_amount: u64, company_name: String) -> Result<()> {
-
-        let vault = &mut self.vault;
+    pub fn deposit_tokens(&mut self, deposit_amount: u64, company_name: String) -> Result<()> {
+        let vesting_contract_info = &mut self.vesting_contract_info;
+        vesting_contract_info.total_vested_tokens += deposit_amount;
+        vesting_contract_info.total_available_tokens += deposit_amount;
 
         let cpi_accounts = TransferChecked {
             from: self.company_ata.to_account_info(),
-            to: vault.to_account_info(),
-            mint: self.mint.to_account_info(),
+            to: self.vault.to_account_info(),
             authority: self.creator.to_account_info(),
+            mint: self.mint.to_account_info(),
         };
 
         let cpi_program = self.token_program.to_account_info();
@@ -64,14 +63,7 @@ impl<'info> DepositTokens<'info> {
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
         transfer_checked(cpi_ctx, deposit_amount, self.mint.decimals)?;
-
         msg!("Deposited {} tokens to the vault", deposit_amount);
-
-        let vesting_contract_info = &mut self.vesting_contract_info;
-
-        vesting_contract_info.total_available_tokens += deposit_amount;
-
-        msg!("Vesting Contract Info: {:?}", vesting_contract_info);
 
         Ok(())
     }
