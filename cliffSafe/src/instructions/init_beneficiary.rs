@@ -2,19 +2,17 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::*;
 use anchor_spl::associated_token::AssociatedToken;
 
-use crate::state::vesting_record_info::*;
-use crate::state::vesting_contract_info::*;
+use crate::state::vesting_record_info::{VestingRecordInfo, VestingType};
+use crate::state::vesting_contract_info::VestingContractInfo;
 
 use crate::error::ErrorCode;
 
 #[derive(Accounts)]
-#[instruction(vesting_type: u8, cliff_period: i64, vesting_start_time: i64, vesting_end_time: i64, company_name: String)]
+#[instruction(company_name: String, vesting_type: u8, cliff_period: i64, start_time: i64, end_time: i64, vesting_amount: u64)]
 pub struct InitializeBeneficiary<'info> {
-    /// The company or vesting contract owner, who is funding and initializing the beneficiary.
     #[account(mut)]
     pub creator: Signer<'info>,
 
-    /// The wallet receiving the vesting tokens.
     pub beneficiary: SystemAccount<'info>,
 
     #[account(
@@ -55,39 +53,52 @@ pub struct InitializeBeneficiary<'info> {
 }
 
 impl<'info> InitializeBeneficiary<'info> {
-    pub fn init_beneficiary(&mut self, vesting_type: u8, cliff_period: i64, vesting_start_time: i64, vesting_end_time: i64, company_name: String) -> Result<()>  {
-        msg!("Initializing beneficiary...");
-
+    pub fn initialize_beneficiary(&mut self, company_name: String, vesting_type: u8, cliff_period: i64, start_time: i64, end_time: i64, vesting_amount: u64) -> Result<()> {
         let vesting_record_info = &mut self.vesting_record_info;
+        let vesting_contract_info = &mut self.vesting_contract_info;
 
-        let vesting_type_enum = match vesting_type {
-            0 => VestingType::Cliff,
-            1 => VestingType::Linear,
+        if vesting_contract_info.total_available_tokens < vesting_amount && vesting_contract_info.total_available_tokens == 0 && vesting_contract_info.total_locked_tokens == vesting_contract_info.total_vested_tokens {
+            return Err(ErrorCode::NoAvailableTokensToVest.into());
+        }
+
+        let vesting_type = match vesting_type {
+            0 => VestingType::CliffVesting,
+            1 => VestingType::LinearVesting,
             _ => return Err(ErrorCode::InvalidVestingType.into()),
         };
 
-        let vesting_record_data = Box::new(VestingRecordInfo {
+        let claim_multiple = match vesting_type {
+            VestingType::CliffVesting => false,
+            VestingType::LinearVesting => true,
+        };
+
+        vesting_record_info.set_inner(VestingRecordInfo{
             beneficiary: self.beneficiary.key(),
             mint: self.mint.key(),
-            total_vested_tokens: self.vesting_contract_info.total_locked_tokens,
+            total_vested_tokens: vesting_amount,
             total_claimed_tokens_by_beneficiary: 0,
-            vesting_type: vesting_type_enum,
+            vesting_type,
             cliff_period,
-            vesting_start_time,
-            vesting_end_time,
-            vault_bump: self.vesting_contract_info.vault_bump,
-            vesting_contract_bump: self.vesting_contract_info.bump,
+            vault_bump: vesting_contract_info.vault_bump,
+            vesting_contract_info_bump: vesting_contract_info.bump,
+            bump: vesting_record_info.bump,
             beneficiary_ata: self.beneficiary_ata.key(),
             has_claimed: false,
-            is_active: true,
+            claim_multiple,
+            start_time,
+            end_time,
         });
 
-        vesting_record_info.set_inner(*vesting_record_data);
-        
+        vesting_contract_info.total_locked_tokens = vesting_contract_info.total_locked_tokens
+            .checked_add(vesting_amount)
+            .ok_or(ErrorCode::NumericalOverflow)?;
 
-        msg!("Beneficiary Account Info : ${:?}", vesting_record_info);
+        vesting_contract_info.total_available_tokens = vesting_contract_info.total_available_tokens
+            .checked_sub(vesting_amount)
+            .ok_or(ErrorCode::NumericalOverflow)?;
+
+        msg!("Beneficiary record info : {:?}", vesting_record_info);
 
         Ok(())
     }
-        
 }
